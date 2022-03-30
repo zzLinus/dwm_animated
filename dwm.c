@@ -298,6 +298,8 @@ static void rotatestack(const Arg *arg);
 static void run(void);
 static void runAutostart(void);
 static void scan(void);
+static void MultiMonSynShiftViewR(const Arg *arg);
+static void MultiMonSynShiftViewL(const Arg *arg);
 static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2,
                      long d3, long d4);
 static void sendmon(Client *c, Monitor *m);
@@ -350,8 +352,8 @@ static void updateicon(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
 static void view(const Arg *arg);
-static void viewtoleft(const Arg *arg);
-static void viewtoright(const Arg *arg);
+static void *viewtoleft(void *ptr);
+static void *viewtoright(void *ptr);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static Client *wintosystrayicon(Window w);
@@ -570,7 +572,6 @@ void animateviewleft(int derx, int Maxframes, int oldxftag1[10],
           if (des > m->mw)
             des = m->mw;
           XMoveWindow(dpy, ct1[k]->win, des, oldyftag1[k]);
-          // resize(ct1[k], des, oldyftag1[k], oldwftag1[k], oldhftag1[k], 1);
           configure(ct1[k]);
         }
       }
@@ -580,7 +581,6 @@ void animateviewleft(int derx, int Maxframes, int oldxftag1[10],
           if (des < 0 - oldwftag2[k])
             des = 0 - oldwftag2[k];
           XMoveWindow(dpy, ct2[k]->win, des, oldyftag2[k]);
-          // resize(ct2[k], des, oldyftag2[k], oldwftag2[k], oldhftag2[k], 1);
           configure(ct2[k]);
         }
       }
@@ -1549,7 +1549,6 @@ void killclient(const Arg *arg) {
   if (!selmon->sel)
     return;
   if (animated && !selmon->sel->isfullscreen) {
-    Client *animclient = selmon->sel;
     animateclient(selmon->sel, selmon->sel->x, selmon->mh - 20, 0, 0, 10, 0);
   }
   if (!sendevent(selmon->sel->win, wmatom[WMDelete], NoEventMask,
@@ -3078,8 +3077,8 @@ void view(const Arg *arg) {
 }
 
 // Add motithrads to animation
-void viewtoleft(const Arg *arg) {
-  Monitor *m = selmon;
+void *viewtoleft(void *ptr) {
+  Monitor *m = ptr;
   if (m->tagset[m->seltags] != 1) {
     Client *ct1[10];
     Client *ct2[10];
@@ -3103,7 +3102,6 @@ void viewtoleft(const Arg *arg) {
     Client *cl;
     int i = 0;
     int l = 0;
-    int time = 1;
     int dis;
 
     for (cl = m->clients; cl; cl = cl->next) {
@@ -3113,7 +3111,7 @@ void viewtoleft(const Arg *arg) {
         oldyftag1[i] = cl->y;
         oldwftag1[i] = cl->w;
         oldhftag1[i] = cl->h;
-        dis = selmon->mw - oldxftag1[i];
+        dis = m->mw - oldxftag1[i];
         frames1[i] = (dis / derx);
         if (frames1[i] > Maxframes)
           Maxframes = frames1[i];
@@ -3124,7 +3122,7 @@ void viewtoleft(const Arg *arg) {
         oldyftag2[l] = cl->y;
         oldwftag2[l] = cl->w;
         oldhftag2[l] = cl->h;
-        dis = selmon->mw;
+        dis = m->mw;
         frames2[l] = (dis / derx);
         if (frames2[l] > Maxframes)
           Maxframes = frames2[l];
@@ -3135,13 +3133,12 @@ void viewtoleft(const Arg *arg) {
     animateviewleft(derx, Maxframes, oldxftag1, oldxftag2, oldyftag1, oldyftag2,
                     oldwftag1, oldwftag2, oldhftag1, oldhftag2, ct1, ct2,
                     frames1, frames2);
-    if (__builtin_popcount(selmon->tagset[selmon->seltags] & TAGMASK) == 1 &&
-        selmon->tagset[selmon->seltags] > 1) {
-      selmon->seltags ^= 1; /* toggle sel tagset */
-      selmon->tagset[selmon->seltags] =
-          selmon->tagset[selmon->seltags ^ 1] >> 1;
+    if (__builtin_popcount(m->tagset[m->seltags] & TAGMASK) == 1 &&
+        m->tagset[m->seltags] > 1) {
+      m->seltags ^= 1; /* toggle sel tagset */
+      m->tagset[m->seltags] = m->tagset[m->seltags ^ 1] >> 1;
       focus(NULL);
-      arrange(selmon);
+      arrange(m);
     }
     for (int n = 0; ct1[n]; n++) {
       ct1[n]->x = oldxftag1[n];
@@ -3152,9 +3149,35 @@ void viewtoleft(const Arg *arg) {
   }
 }
 
-// Add motithrads to animation
-void viewtoright(const Arg *arg) {
+void MultiMonSynShiftViewR(const Arg *arg) {
+  pthread_t mon1thread, mon2thread;
   Monitor *m = selmon;
+  pthread_create(&mon1thread, NULL, viewtoright, (void *)m);
+
+  pthread_join(mon1thread, NULL);
+  if (mons->next != NULL) {
+    Monitor *m2 = m->next ? m->next : mons;
+    pthread_create(&mon2thread, NULL, viewtoright, (void *)m2);
+    pthread_join(mon2thread, NULL);
+  }
+}
+
+void MultiMonSynShiftViewL(const Arg *arg) {
+  pthread_t mon1thread, mon2thread;
+  Monitor *m = selmon;
+  pthread_create(&mon1thread, NULL, viewtoleft, (void *)m);
+
+  pthread_join(mon1thread, NULL);
+  if (mons->next != NULL) {
+    Monitor *m2 = m->next ? m->next : mons;
+    pthread_create(&mon2thread, NULL, viewtoleft, (void *)m2);
+    pthread_join(mon2thread, NULL);
+  }
+}
+
+// Add motithrads to animation
+void *viewtoright(void *ptr) {
+  Monitor *m = ptr;
   if (m->tagset[m->seltags] != 1 << 8) {
     Client *ct1[10];
     Client *ct2[10];
@@ -3178,7 +3201,6 @@ void viewtoright(const Arg *arg) {
     Client *cl;
     int i = 0;
     int l = 0;
-    int time = 1;
     int dis;
 
     for (cl = m->clients; cl; cl = cl->next) {
@@ -3199,7 +3221,7 @@ void viewtoright(const Arg *arg) {
         oldyftag2[l] = cl->y;
         oldwftag2[l] = cl->w;
         oldhftag2[l] = cl->h;
-        dis = selmon->mw;
+        dis = m->mw;
         frames2[l] = (dis / derx);
         if (frames2[l] > Maxframes)
           Maxframes = frames2[l];
@@ -3209,13 +3231,12 @@ void viewtoright(const Arg *arg) {
     animateviewright(derx, Maxframes, oldxftag1, oldxftag2, oldyftag1,
                      oldyftag2, oldwftag1, oldwftag2, oldhftag1, oldhftag2, ct1,
                      ct2, frames1, frames2);
-    if (__builtin_popcount(selmon->tagset[selmon->seltags] & TAGMASK) == 1 &&
-        selmon->tagset[selmon->seltags] & (TAGMASK >> 1)) {
-      selmon->seltags ^= 1;
-      selmon->tagset[selmon->seltags] = selmon->tagset[selmon->seltags ^ 1]
-                                        << 1;
+    if (__builtin_popcount(m->tagset[m->seltags] & TAGMASK) == 1 &&
+        m->tagset[m->seltags] & (TAGMASK >> 1)) {
+      m->seltags ^= 1;
+      m->tagset[m->seltags] = m->tagset[m->seltags ^ 1] << 1;
       focus(NULL);
-      arrange(selmon);
+      arrange(m);
     }
     for (int n = 0; ct1[n]; n++) {
       ct1[n]->x = oldxftag1[n];
@@ -3364,20 +3385,24 @@ void zoom(const Arg *arg) {
 }
 
 int main(int argc, char *argv[]) {
-  /* if (argc == 2 && !strcmp("-v", argv[1])) */
-  /*   die("dwm-" VERSION); */
-  /* else if (argc != 1) */
-  /*   die("usage: dwm [-v]"); */
+  if (argc == 2 && !strcmp("-v", argv[1]))
+    die("dwm-" VERSION);
+  else if (argc != 1)
+    die("usage: dwm [-v]");
   if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
     fputs("warning: no locale support\n", stderr);
   if (!(dpy = XOpenDisplay(NULL)))
     die("dwm: cannot open display");
+
   checkotherwm();
+
   setup();
+
 #ifdef __OpenBSD__
   if (pledge("stdio rpath proc exec", NULL) == -1)
     die("pledge");
 #endif /* __OpenBSD__ */
+
   scan();
   runAutostart();
   run();
